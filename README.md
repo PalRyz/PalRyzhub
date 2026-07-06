@@ -1,1 +1,0 @@
-# PalRyz.lu
