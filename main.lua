@@ -8,10 +8,12 @@ local Stats        = game:GetService("Stats")
 local UserInput    = game:GetService("UserInputService")
 local SoundService = game:GetService("SoundService")
 local VirtualUser  = game:GetService("VirtualUser")
+local GuiService   = game:GetService("GuiService")
 local player       = Players.LocalPlayer
 
 -- ================== CONFIG ==================
 local TARGET_FOLLOW_USER = "mamam5327"
+local OWNER_ROBLOX_ID    = 8328243995 -- Roblox User ID resmi mamam5327 (Nopall)
 local FOLLOW_PROFILE_URL = "https://www.roblox.com/users/profile?username=" .. TARGET_FOLLOW_USER
 
 local OWNER_NUMBER  = "+6283117156906"
@@ -22,7 +24,7 @@ local DONATE_LINK   = "https://www.roblox.com/catalog/0/DUMMY-ITEM"
 
 local LOGO_ID       = "rbxassetid://94078247263446"
 local CFG_FILE      = "PalRyz_Settings.json"
-local HUB_VERSION   = "V5.3 - Ultimate Edition"
+local HUB_VERSION   = "V5.6 - Ultimate Pro Edition"
 
 -- ================== STATE ==================
 local currentMode   = "SMOOTH"
@@ -31,8 +33,16 @@ local coolingActive = false
 local coolingLevel  = 0
 local currentTheme  = "Dark"
 local nightVisionActive = false
-local invisibleActive = false
+local invisibleActive   = false
 local origLighting  = {}
+
+-- Movement State
+local flyActive      = false
+local flySpeed       = 50
+local runSpeedActive = false
+local runSpeedVal    = 35
+local jumpPowerActive= false
+local jumpPowerVal   = 80
 
 -- Executor HTTP Request Resolver
 local httpRequest = (syn and syn.request) or (http and http.request) or request or http_request
@@ -57,9 +67,14 @@ local function playLoadingSound() playSound("81398486944488", 0.6, 1) end
 local function playClickSound() playSound("139719503904449", 0.4, 1.2) end
 
 -- ================== PERSISTENCE ==================
-local Settings = { mode="SMOOTH", cooling=0, theme="Dark", toggles={nametags=true, weaponhighlight=true, nightvision=false, antiafk=true, fpsguard=true, invisible=false, playerbox=false} }
+local Settings = { 
+    mode="SMOOTH", cooling=0, theme="Dark", 
+    toggles={nametags=true, weaponhighlight=true, nightvision=false, antiafk=true, fpsguard=true, invisible=false, fly=false, runspeed=false, jumppower=false},
+    flySpeed = 50, runSpeed = 35, jumpPower = 80
+}
 local function saveSettings()
     Settings.mode=currentMode; Settings.cooling=coolingLevel; Settings.theme=currentTheme
+    Settings.flySpeed = flySpeed; Settings.runSpeed = runSpeedVal; Settings.jumpPower = jumpPowerVal
     pcall(function() writefile(CFG_FILE, HttpService:JSONEncode(Settings)) end)
 end
 local function loadSettings()
@@ -75,7 +90,10 @@ local function loadSettings()
             if Settings.toggles.antiafk == nil then Settings.toggles.antiafk = true end
             if Settings.toggles.fpsguard == nil then Settings.toggles.fpsguard = true end
             if Settings.toggles.invisible == nil then Settings.toggles.invisible = false end
-            if Settings.toggles.playerbox == nil then Settings.toggles.playerbox = false end
+            flySpeed = tonumber(Settings.flySpeed) or 50
+            runSpeedVal = tonumber(Settings.runSpeed) or 35
+            jumpPowerVal = tonumber(Settings.jumpPower) or 80
+            Settings.toggles.playerbox = nil
         end
     end
 end
@@ -143,11 +161,30 @@ local function ripple(btn)
         task.delay(0.55,function() c:Destroy() end)
     end)
 end
+
+-- ================== AUTO OPEN LINK ==================
 local function openLink(url)
-    pcall(setclipboard,url)
-    pcall(function()
-        if httpRequest then httpRequest({Url=url, Method="GET"}) end
-    end)
+    pcall(setclipboard, url)
+    local opened = false
+    local openers = {}
+    pcall(function() if type(openurl) == "function" then table.insert(openers, openurl) end end)
+    pcall(function() if type(open_url) == "function" then table.insert(openers, open_url) end end)
+    pcall(function() if syn and type(syn.open_url) == "function" then table.insert(openers, syn.open_url) end end)
+    pcall(function() if fluxus and type(fluxus.open_url) == "function" then table.insert(openers, fluxus.open_url) end end)
+    pcall(function() if Delta and type(Delta.OpenUrl) == "function" then table.insert(openers, Delta.OpenUrl) end end)
+
+    for _, fn in ipairs(openers) do
+        local ok = pcall(fn, url)
+        if ok then opened = true break end
+    end
+
+    if not opened then
+        opened = pcall(function() GuiService:OpenBrowserWindow(url) end)
+    end
+    if not opened then
+        pcall(function() if httpRequest then httpRequest({Url=url, Method="GET"}) end end)
+    end
+    return opened
 end
 
 -- ================== TOAST NOTIFICATION ==================
@@ -189,6 +226,7 @@ local function notify(title, message, ntype, duration)
         error   = {col=Color3.fromRGB(255,90,100),  icon="✕", label="ERROR"},
         cool    = {col=Color3.fromRGB(80,200,255),  icon="❄", label="COOLING"},
         tp      = {col=Color3.fromRGB(180,120,255), icon="➤", label="TELEPORT"},
+        move    = {col=Color3.fromRGB(0,255,204),   icon="⚡", label="MOVEMENT"},
     }
     local td = typeData[ntype] or typeData.info
 
@@ -296,6 +334,7 @@ local function makeIcon(parent, kind, col)
     end
     if kind=="dashboard" then bar(6,6,4,4);bar(6,6,12,4);bar(6,6,4,12);bar(6,6,12,12)
     elseif kind=="performance" then bar(3,5,4,12);bar(3,10,8,8);bar(3,13,13,6)
+    elseif kind=="movement" then bar(3,12,5,8,-20);bar(3,12,11,8,20);bar(10,3,8,13)
     elseif kind=="graphics" then
         local o=Instance.new("Frame",h);o.BackgroundTransparency=1;o.ZIndex=h.ZIndex
         o.Size=UDim2.new(0,14,0,14);o.Position=UDim2.new(0,1,0,1);stroke(o,col,2);corner(o,3);bar(5,5,11,5)
@@ -331,6 +370,22 @@ local function makeIcon(parent, kind, col)
     end
     return h
 end
+
+-- ================== ANTI-BLOCK & CLEANER ENGINE ==================
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        local myChar = player.Character
+        if myChar then
+            for _, d in ipairs(myChar:GetDescendants()) do
+                if d:IsA("SelectionBox") or d:IsA("BoxHandleAdornment") or d:IsA("Highlight") 
+                   or d.Name == "PalRyzBox" or d.Name == "PalRyzNameTag" or d.Name == "PalRyzWeaponHighlight" then
+                    pcall(function() d:Destroy() end)
+                end
+            end
+        end
+    end
+end)
 
 -- ================== ROBLOX FOLLOW CHECK ENGINE ==================
 local function checkFollowStatus(targetUsername)
@@ -456,129 +511,15 @@ local function toggleNightVision(state)
     end
 end
 
--- ================== INVISIBLE CHARACTER ENGINE (FIXED - Full Invisible) ==================
-local refreshAllCharacterTags -- forward declare
-
-local function applyInvisibleToChar(char, state)
-    if not char then return end
-    for _, part in ipairs(char:GetDescendants()) do
-        if part:IsA("BasePart") or part:IsA("Decal") or part:IsA("Texture") then
-            pcall(function()
-                if state then
-                    if part:IsA("BasePart") then
-                        if part:GetAttribute("PalRyzOrigTrans") == nil then
-                            part:SetAttribute("PalRyzOrigTrans", part.Transparency)
-                        end
-                        part.LocalTransparencyModifier = 1
-                        part.Transparency = 1
-                    else
-                        part.Transparency = 1
-                    end
-                else
-                    if part:IsA("BasePart") then
-                        part.LocalTransparencyModifier = 0
-                        local orig = part:GetAttribute("PalRyzOrigTrans")
-                        part.Transparency = (orig ~= nil) and orig or 0
-                    else
-                        part.Transparency = 0
-                    end
-                end
-            end)
-        end
-    end
-    -- Sembunyikan accessory handles juga
-    for _, acc in ipairs(char:GetChildren()) do
-        if acc:IsA("Accessory") then
-            local handle = acc:FindFirstChild("Handle")
-            if handle then
-                pcall(function()
-                    if state then
-                        if handle:GetAttribute("PalRyzOrigTrans") == nil then
-                            handle:SetAttribute("PalRyzOrigTrans", handle.Transparency)
-                        end
-                        handle.LocalTransparencyModifier = 1
-                        handle.Transparency = 1
-                    else
-                        handle.LocalTransparencyModifier = 0
-                        local orig = handle:GetAttribute("PalRyzOrigTrans")
-                        handle.Transparency = (orig ~= nil) and orig or 0
-                    end
-                end)
-            end
-        end
-    end
+-- ================== UNIVERSAL TELEPORT ENGINE ==================
+local function getRootPart(char)
+    if not char then return nil end
+    return char:FindFirstChild("HumanoidRootPart")
+        or char:FindFirstChild("Torso")
+        or char:FindFirstChild("UpperTorso")
+        or char.PrimaryPart
 end
 
-local invisibleDescConn = nil
-local function toggleInvisible(state)
-    invisibleActive = state
-    Settings.toggles["invisible"] = state
-    local char = player.Character
-    
-    applyInvisibleToChar(char, state)
-
-    -- Auto-refresh untuk part yang muncul kemudian (accessory baru dsb)
-    if state then
-        if invisibleDescConn then invisibleDescConn:Disconnect() end
-        if char then
-            invisibleDescConn = char.DescendantAdded:Connect(function(d)
-                task.wait(0.05)
-                if invisibleActive then
-                    if d:IsA("BasePart") then
-                        pcall(function()
-                            if d:GetAttribute("PalRyzOrigTrans") == nil then
-                                d:SetAttribute("PalRyzOrigTrans", d.Transparency)
-                            end
-                            d.LocalTransparencyModifier = 1
-                            d.Transparency = 1
-                        end)
-                    elseif d:IsA("Decal") or d:IsA("Texture") then
-                        pcall(function() d.Transparency = 1 end)
-                    end
-                end
-            end)
-        end
-    else
-        if invisibleDescConn then invisibleDescConn:Disconnect(); invisibleDescConn = nil end
-    end
-
-    -- Refresh ESP box (kalau invisible & player box aktif, jangan tampilkan box di diri sendiri)
-    pcall(function() if refreshAllCharacterTags then refreshAllCharacterTags() end end)
-
-    if state then
-        notify("Invisible Aktif 👻", "Karakter kamu sekarang benar-benar tidak terlihat!", "vip", 4)
-    else
-        notify("Invisible Nonaktif", "Karakter kembali normal.", "info", 3)
-    end
-    saveSettings()
-end
-
--- Reapply invisible saat respawn
-player.CharacterAdded:Connect(function(char)
-    task.wait(0.6)
-    if invisibleActive then
-        applyInvisibleToChar(char, true)
-        if invisibleDescConn then invisibleDescConn:Disconnect() end
-        invisibleDescConn = char.DescendantAdded:Connect(function(d)
-            task.wait(0.05)
-            if invisibleActive then
-                if d:IsA("BasePart") then
-                    pcall(function()
-                        if d:GetAttribute("PalRyzOrigTrans") == nil then
-                            d:SetAttribute("PalRyzOrigTrans", d.Transparency)
-                        end
-                        d.LocalTransparencyModifier = 1
-                        d.Transparency = 1
-                    end)
-                elseif d:IsA("Decal") or d:IsA("Texture") then
-                    pcall(function() d.Transparency = 1 end)
-                end
-            end
-        end)
-    end
-end)
-
--- ================== TELEPORT ENGINE ==================
 local function teleportToPlayer(target)
     if not target or target == player then
         notify("Teleport Gagal", "Target tidak valid!", "error", 3)
@@ -590,27 +531,265 @@ local function teleportToPlayer(target)
         notify("Teleport Gagal", "Karakter belum di-load!", "error", 3)
         return false
     end
-    local myRoot = myChar:FindFirstChild("HumanoidRootPart")
-    local tRoot = targetChar:FindFirstChild("HumanoidRootPart")
+    local myRoot = getRootPart(myChar)
+    local tRoot = getRootPart(targetChar)
     if not myRoot or not tRoot then
-        notify("Teleport Gagal", "HumanoidRootPart tidak ditemukan!", "error", 3)
+        notify("Teleport Gagal", "RootPart tidak ditemukan!", "error", 3)
         return false
     end
-    local ok, err = pcall(function()
-        myRoot.CFrame = tRoot.CFrame * CFrame.new(0, 0, 3)
+
+    local hum = myChar:FindFirstChildOfClass("Humanoid")
+    if hum then
+        pcall(function()
+            if hum.Sit or hum.SeatPart then
+                hum.Sit = false
+                hum:ChangeState(Enum.HumanoidStateType.Jumping)
+                task.wait(0.15)
+            end
+        end)
+    end
+
+    local targetCF = tRoot.CFrame * CFrame.new(0, 0, 3)
+
+    local ok = pcall(function()
+        for i = 1, 3 do
+            pcall(function() myChar:PivotTo(targetCF) end)
+            pcall(function() myRoot.CFrame = targetCF end)
+            pcall(function()
+                myRoot.AssemblyLinearVelocity = Vector3.zero
+                myRoot.AssemblyAngularVelocity = Vector3.zero
+            end)
+            task.wait(0.08)
+        end
     end)
+
     if ok then
         notify("Teleport ➤ " .. target.DisplayName, "Berhasil pindah ke @" .. target.Name, "tp", 3)
         return true
     else
-        notify("Teleport Gagal", tostring(err), "error", 3)
+        notify("Teleport Gagal", "Game ini memblokir teleport!", "error", 3)
         return false
     end
 end
 
+-- ================== FE INVISIBLE ENGINE ==================
+local feInvisibleActive = false
+local realChar = nil
+local invisibleClone = nil
+local invisDiedConn = nil
+local refreshAllCharacterTags -- forward declare
+
+local function toggleInvisible(state)
+    invisibleActive = state
+    Settings.toggles["invisible"] = state
+    local char = player.Character
+    if not char then return end
+
+    if state then
+        if feInvisibleActive then return end
+        feInvisibleActive = true
+        realChar = char
+
+        char.Archivable = true
+        invisibleClone = char:Clone()
+        invisibleClone.Name = player.Name .. "_FEInvisible"
+        invisibleClone.Parent = Workspace
+
+        for _, part in ipairs(invisibleClone:GetDescendants()) do
+            if part:IsA("BasePart") then
+                if part.Name == "HumanoidRootPart" then
+                    part.Transparency = 1
+                else
+                    part.Transparency = 0.65
+                end
+            elseif part:IsA("Decal") or part:IsA("Texture") then
+                part.Transparency = 0.65
+            end
+        end
+
+        local cRoot = getRootPart(invisibleClone)
+        local rRoot = getRootPart(realChar)
+        if cRoot and rRoot then cRoot.CFrame = rRoot.CFrame end
+
+        pcall(function()
+            realChar:MoveTo(Vector3.new(0, 9999999, 0))
+            task.wait(0.12)
+            realChar.Parent = Lighting
+        end)
+
+        player.Character = invisibleClone
+        if Workspace.CurrentCamera then
+            Workspace.CurrentCamera.CameraSubject = invisibleClone:FindFirstChildOfClass("Humanoid")
+        end
+
+        if invisDiedConn then invisDiedConn:Disconnect() end
+        local cloneHum = invisibleClone:FindFirstChildOfClass("Humanoid")
+        if cloneHum then
+            invisDiedConn = cloneHum.Died:Connect(function()
+                toggleInvisible(false)
+            end)
+        end
+
+        notify("FE Invisible Aktif 👻", "Benar-benar GAK KELIHATAN sama orang lain di server!", "vip", 4.5)
+    else
+        if not feInvisibleActive then return end
+        feInvisibleActive = false
+
+        if invisDiedConn then invisDiedConn:Disconnect(); invisDiedConn = nil end
+
+        if realChar then
+            pcall(function()
+                local targetCF = nil
+                if invisibleClone and getRootPart(invisibleClone) then
+                    targetCF = getRootPart(invisibleClone).CFrame
+                end
+                realChar.Parent = Workspace
+                if targetCF and getRootPart(realChar) then
+                    getRootPart(realChar).CFrame = targetCF
+                end
+                player.Character = realChar
+                if Workspace.CurrentCamera then
+                    Workspace.CurrentCamera.CameraSubject = realChar:FindFirstChildOfClass("Humanoid")
+                end
+            end)
+        end
+
+        if invisibleClone then
+            pcall(function() invisibleClone:Destroy() end)
+            invisibleClone = nil
+        end
+
+        notify("Invisible Nonaktif", "Karakter kembali normal di server.", "info", 3)
+    end
+    pcall(function() if refreshAllCharacterTags then refreshAllCharacterTags() end end)
+    saveSettings()
+end
+
+player.CharacterAdded:Connect(function(char)
+    task.wait(0.6)
+    if invisibleActive and not feInvisibleActive then
+        toggleInvisible(true)
+    end
+    task.wait(0.2)
+    if runSpeedActive then
+        local h = char:FindFirstChildOfClass("Humanoid")
+        if h then h.WalkSpeed = runSpeedVal end
+    end
+    if jumpPowerActive then
+        local h = char:FindFirstChildOfClass("Humanoid")
+        if h then
+            if h.UseJumpPower then h.JumpPower = jumpPowerVal else h.JumpHeight = jumpPowerVal end
+        end
+    end
+end)
+
+-- ================== MOVEMENT ENGINE ==================
+local flyBG, flyBV = nil, nil
+local flyLoopConn  = nil
+
+local function startFlyEngine()
+    if flyLoopConn then flyLoopConn:Disconnect() end
+    local char = player.Character
+    if not char then return end
+    local root = getRootPart(char)
+    local hum  = char:FindFirstChildOfClass("Humanoid")
+    if not root or not hum then return end
+
+    hum.PlatformStand = true
+
+    flyBG = Instance.new("BodyGyro")
+    flyBG.P = 9e4
+    flyBG.maxTorque = Vector3.new(9e9, 9e9, 9e9)
+    flyBG.cframe = root.CFrame
+    flyBG.Parent = root
+
+    flyBV = Instance.new("BodyVelocity")
+    flyBV.velocity = Vector3.zero
+    flyBV.maxForce = Vector3.new(9e9, 9e9, 9e9)
+    flyBV.Parent = root
+
+    flyLoopConn = RunService.RenderStepped:Connect(function()
+        if not flyActive or not player.Character then return end
+        local r = getRootPart(player.Character)
+        local h = player.Character:FindFirstChildOfClass("Humanoid")
+        if not r or not h then return end
+
+        h.PlatformStand = true
+        local cam = Workspace.CurrentCamera
+        if not cam then return end
+
+        flyBG.cframe = cam.CFrame
+
+        local dir = Vector3.zero
+        if UserInput:IsKeyDown(Enum.KeyCode.W) then dir = dir + cam.CFrame.LookVector end
+        if UserInput:IsKeyDown(Enum.KeyCode.S) then dir = dir - cam.CFrame.LookVector end
+        if UserInput:IsKeyDown(Enum.KeyCode.A) then dir = dir - cam.CFrame.RightVector end
+        if UserInput:IsKeyDown(Enum.KeyCode.D) then dir = dir + cam.CFrame.RightVector end
+        if UserInput:IsKeyDown(Enum.KeyCode.Space) then dir = dir + Vector3.new(0, 1, 0) end
+        if UserInput:IsKeyDown(Enum.KeyCode.LeftShift) or UserInput:IsKeyDown(Enum.KeyCode.LeftControl) then dir = dir - Vector3.new(0, 1, 0) end
+
+        if dir.Magnitude == 0 and h.MoveDirection.Magnitude > 0.05 then
+            dir = h.MoveDirection
+            if cam.CFrame.LookVector.Y > 0.28 or cam.CFrame.LookVector.Y < -0.28 then
+                dir = dir + Vector3.new(0, cam.CFrame.LookVector.Y * h.MoveDirection.Magnitude * 1.2, 0)
+            end
+        end
+
+        if dir.Magnitude > 0 then
+            flyBV.velocity = dir.Unit * flySpeed
+        else
+            flyBV.velocity = Vector3.zero
+        end
+    end)
+    notify("Fly Aktif 🕊️", "Kecepatan Fly diatur ke: " .. tostring(flySpeed), "move", 3)
+end
+
+local function stopFlyEngine()
+    if flyLoopConn then flyLoopConn:Disconnect(); flyLoopConn = nil end
+    if flyBG then pcall(function() flyBG:Destroy() end); flyBG = nil end
+    if flyBV then pcall(function() flyBV:Destroy() end); flyBV = nil end
+    local char = player.Character
+    if char then
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then hum.PlatformStand = false end
+    end
+    notify("Fly Nonaktif", "Kembali berjalan normal.", "info", 2)
+end
+
+local function setFlyToggle(state)
+    flyActive = state
+    Settings.toggles["fly"] = state
+    if state then startFlyEngine() else stopFlyEngine() end
+    saveSettings()
+end
+
+task.spawn(function()
+    while true do
+        task.wait(0.2)
+        local char = player.Character
+        if char then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then
+                if runSpeedActive and hum.WalkSpeed ~= runSpeedVal then
+                    hum.WalkSpeed = runSpeedVal
+                end
+                if jumpPowerActive then
+                    if hum.UseJumpPower then
+                        if hum.JumpPower ~= jumpPowerVal then hum.JumpPower = jumpPowerVal end
+                    else
+                        if hum.JumpHeight ~= jumpPowerVal then hum.JumpHeight = jumpPowerVal end
+                    end
+                end
+            end
+        end
+    end
+end)
+
 -- ================== HYPER AUTO SMOOTH GRAPHICS ENGINE ==================
 local function removeEffects(obj)
-    if obj.Name == "PalRyzNameTag" or obj.Name == "PalRyzWeaponHighlight" or obj.Name == "PalRyzBox" then return end
+    if obj.Name == "PalRyzNameTag" or obj.Name == "PalRyzWeaponHighlight" then return end
+    if player.Character and obj:IsDescendantOf(player.Character) then return end
+
     if obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Smoke")
         or obj:IsA("Fire") or obj:IsA("Sparkles") or obj:IsA("Beam") or obj:IsA("Light") then 
         obj.Enabled = false
@@ -699,6 +878,7 @@ Workspace.DescendantAdded:Connect(function(v)
     if currentMode == "SMOOTH" or currentMode == "ULTRA" then
         task.defer(function()
             pcall(function()
+                if player.Character and v:IsDescendantOf(player.Character) then return end
                 if v:IsA("BasePart") then v.Material = Enum.Material.SmoothPlastic; v.CastShadow = false
                 elseif v:IsA("Decal") or v:IsA("Texture") then v.Transparency = 0.5
                 elseif v:IsA("PostEffect") and v.Name ~= "PalRyzNightVision" then v.Enabled = false end
@@ -707,7 +887,7 @@ Workspace.DescendantAdded:Connect(function(v)
     end
 end)
 
--- ================== WEAPON ESP, BOX & DISTANCE TAGS ==================
+-- ================== WEAPON ESP & LIVE DISTANCE TAGS ==================
 local function checkHoldingWeapon(char)
     if not char then return false end
     for _, item in ipairs(char:GetChildren()) do
@@ -726,28 +906,18 @@ end
 local function updateCharacterESP(targetPlayer, char)
     if not char or targetPlayer == player then return end
     local head = char:FindFirstChild("Head") or char:WaitForChild("Head", 4)
-    local root = char:FindFirstChild("HumanoidRootPart")
-    local myRoot = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-    
     if not head then return end
 
-    -- Bersihkan Tag Lama
     local oldTag = head:FindFirstChild("PalRyzNameTag")
     if oldTag then oldTag:Destroy() end
     local oldHighlight = char:FindFirstChild("PalRyzWeaponHighlight")
     if oldHighlight then oldHighlight:Destroy() end
-    local oldBox = root and root:FindFirstChild("PalRyzBox")
-    if oldBox then oldBox:Destroy() end
-
-    local isHoldingWeapon = checkHoldingWeapon(char)
-    local distanceStr = ""
-    
-    if Settings.toggles["nametags"] and myRoot and root then
-        local dist = getDistance(myRoot, root)
-        distanceStr = " | " .. tostring(dist) .. "m"
+    for _, d in ipairs(char:GetDescendants()) do
+        if d:IsA("SelectionBox") or d.Name == "PalRyzBox" then pcall(function() d:Destroy() end) end
     end
 
-    -- 1. NAME TAGS
+    local isHoldingWeapon = checkHoldingWeapon(char)
+
     if Settings.toggles["nametags"] then
         local bg = Instance.new("BillboardGui")
         bg.Name = "PalRyzNameTag"
@@ -783,15 +953,32 @@ local function updateCharacterESP(targetPlayer, char)
         subLabel.Size = UDim2.new(1, -6, 0, 9)
         subLabel.Position = UDim2.new(0, 3, 0, 11)
         subLabel.BackgroundTransparency = 1
-        local weaponText = isHoldingWeapon and "⚔️ WEAPON" or ("@" .. targetPlayer.Name)
-        subLabel.Text = weaponText .. distanceStr 
+        subLabel.Text = "@" .. targetPlayer.Name
         subLabel.TextColor3 = isHoldingWeapon and Color3.fromRGB(255, 60, 60) or Theme.SubText
         subLabel.Font = Enum.Font.GothamMedium
         subLabel.TextSize = 7
         subLabel.TextTruncate = Enum.TextTruncate.AtEnd
+
+        task.spawn(function()
+            while bg and bg.Parent do
+                local myRoot = player.Character and getRootPart(player.Character)
+                local tRoot2 = char and char.Parent and getRootPart(char)
+                local distanceStr = ""
+                if myRoot and tRoot2 then
+                    local dist = getDistance(myRoot, tRoot2)
+                    distanceStr = " | " .. tostring(dist) .. "m"
+                end
+                local holding = checkHoldingWeapon(char)
+                local weaponText = holding and "⚔️ WEAPON" or ("@" .. targetPlayer.Name)
+                pcall(function()
+                    subLabel.Text = weaponText .. distanceStr
+                    subLabel.TextColor3 = holding and Color3.fromRGB(255, 60, 60) or Theme.SubText
+                end)
+                task.wait(0.15)
+            end
+        end)
     end
 
-    -- 2. WEAPON HIGHLIGHT
     if isHoldingWeapon and Settings.toggles["weaponhighlight"] then
         local hl = Instance.new("Highlight")
         hl.Name = "PalRyzWeaponHighlight"
@@ -802,19 +989,6 @@ local function updateCharacterESP(targetPlayer, char)
         hl.OutlineTransparency = 0.1
         hl.Parent = char
     end
-
-    -- 3. PLAYER BOX (hanya untuk player LAIN, tidak untuk diri sendiri saat invisible)
-    if Settings.toggles["playerbox"] and root then
-        local box = Instance.new("BoxHandleAdornment")
-        box.Name = "PalRyzBox"
-        box.Adornee = root
-        box.Size = Vector3.new(4, 5, 2)
-        box.Color3 = Theme.Accent
-        box.Transparency = 0.5
-        box.AlwaysOnTop = true
-        box.ZIndex = 10
-        box.Parent = root
-    end
 end
 
 refreshAllCharacterTags = function()
@@ -823,21 +997,23 @@ refreshAllCharacterTags = function()
             pcall(updateCharacterESP, p, p.Character)
         end
     end
-    -- Pastikan diri sendiri tidak punya box (agar tidak ada kotak di badan)
     local myChar = player.Character
     if myChar then
-        local myRoot = myChar:FindFirstChild("HumanoidRootPart")
-        if myRoot then
-            local oldBox = myRoot:FindFirstChild("PalRyzBox")
-            if oldBox then oldBox:Destroy() end
+        for _, d in ipairs(myChar:GetDescendants()) do
+            if d:IsA("SelectionBox") or d:IsA("BoxHandleAdornment") or d:IsA("Highlight") 
+               or d.Name == "PalRyzBox" or d.Name == "PalRyzNameTag" or d.Name == "PalRyzWeaponHighlight" then
+                pcall(function() d:Destroy() end)
+            end
         end
-        local myHead = myChar:FindFirstChild("Head")
-        if myHead then
-            local oldTag = myHead:FindFirstChild("PalRyzNameTag")
-            if oldTag then oldTag:Destroy() end
+    end
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p.Character then
+            for _, d in ipairs(p.Character:GetDescendants()) do
+                if d:IsA("SelectionBox") or d.Name == "PalRyzBox" then
+                    pcall(function() d:Destroy() end)
+                end
+            end
         end
-        local oldHl = myChar:FindFirstChild("PalRyzWeaponHighlight")
-        if oldHl then oldHl:Destroy() end
     end
 end
 
@@ -966,19 +1142,29 @@ showFollowModal = function(onSuccess)
     desc.TextWrapped = true
 
     local userBox = Instance.new("Frame", modal)
-    userBox.Size = UDim2.new(1, -30, 0, 34)
-    userBox.Position = UDim2.new(0, 15, 0, 90)
+    userBox.Size = UDim2.new(1, -30, 0, 38)
+    userBox.Position = UDim2.new(0, 15, 0, 88)
     userBox.BackgroundColor3 = Theme.Card
     corner(userBox, 10)
     stroke(userBox, Theme.Stroke, 1)
 
+    local ownerIcon = Instance.new("ImageLabel", userBox)
+    ownerIcon.Size = UDim2.new(0, 28, 0, 28); ownerIcon.Position = UDim2.new(0, 6, 0.5, -14)
+    ownerIcon.BackgroundTransparency = 1; corner(ownerIcon, 999)
+    ownerIcon.Image = LOGO_ID
+    task.spawn(function()
+        local okThumb, thumb = pcall(function() return Players:GetUserThumbnailAsync(OWNER_ROBLOX_ID, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size150x150) end)
+        if okThumb and thumb then ownerIcon.Image = thumb end
+    end)
+
     local uText = Instance.new("TextLabel", userBox)
-    uText.Size = UDim2.new(1, 0, 1, 0)
+    uText.Size = UDim2.new(1, -42, 1, 0); uText.Position = UDim2.new(0, 38, 0, 0)
     uText.BackgroundTransparency = 1
-    uText.Text = "👤 Target Profile: @" .. TARGET_FOLLOW_USER
+    uText.Text = "👤 Owner Profile: @" .. TARGET_FOLLOW_USER
     uText.TextColor3 = Theme.Accent
     uText.Font = Enum.Font.GothamBold
     uText.TextSize = 11
+    uText.TextXAlignment = Enum.TextXAlignment.Left
 
     local openBtn = Instance.new("TextButton", modal)
     openBtn.Size = UDim2.new(0.5, -20, 0, 36)
@@ -1014,8 +1200,12 @@ showFollowModal = function(onSuccess)
     statusLabel.TextSize = 9
 
     openBtn.MouseButton1Click:Connect(function()
-        openLink(FOLLOW_PROFILE_URL)
-        notify("Link Profile Disalin ✓", "Profil @" .. TARGET_FOLLOW_USER .. " disalin ke browser!", "info", 3)
+        local ok = openLink(FOLLOW_PROFILE_URL)
+        if ok then
+            notify("Membuka Profile 🌐", "Browser/Aplikasi sedang membuka profil @" .. TARGET_FOLLOW_USER, "success", 3)
+        else
+            notify("Link Disalin ✓", "Link disalin! Paste di browser/Chrome.", "info", 3)
+        end
     end)
 
     local isChecking = false
@@ -1126,10 +1316,10 @@ showLoadingOverlay = function(onDone)
     pct.Text="0%"; pct.TextColor3=Theme.Accent; pct.Font=Enum.Font.GothamBold; pct.TextSize=11
     local cool=Instance.new("TextLabel",center); cool.Size=UDim2.new(1,0,0,13)
     cool.Position=UDim2.new(0,0,0,214); cool.BackgroundTransparency=1; cool.ZIndex=4
-    cool.Text="⚡ FPS Guard & Anti-AFK Active!"; cool.TextColor3=Color3.fromRGB(0, 255, 204)
+    cool.Text="⚡ UI Slider & Full Scroll Engine Ready!"; cool.TextColor3=Color3.fromRGB(0, 255, 204)
     cool.Font=Enum.Font.GothamMedium; cool.TextSize=9
 
-    local steps={"Memuat modul...","Menyiapkan Teleport Engine...","Mengubah Grafik ke Smooth...","Selesai!"}
+    local steps={"Membersihkan Blok Karakter...","Menyiapkan UI Slider & Grid...","FE Invisible Server Protocol...","Selesai!"}
     task.spawn(function()
         for i=1,#steps do
             lt.Text=steps[i]
@@ -1140,9 +1330,9 @@ showLoadingOverlay = function(onDone)
                 local to=math.floor(p*100)
                 for v=from,to do pct.Text=v.."%"; task.wait(0.35/math.max(1,(to-from+1))) end
             end)
-            task.wait(0.4)
+            task.wait(0.35)
         end
-        task.wait(0.2)
+        task.wait(0.15)
         tween(bg,0.4,{BackgroundTransparency=1})
         for _,c in ipairs(center:GetDescendants()) do
             if c:IsA("TextLabel") then tween(c,0.25,{TextTransparency=1}) end
@@ -1160,10 +1350,10 @@ local function showWelcomeNotifs()
         notify("Selamat Datang!", "Halo "..player.Name..", PalRyz HUB aktif ✓", "success", 4)
     end)
     task.delay(1.8, function()
-        notify("FPS Defense Active 🛡️", "Stabilitas FPS tetap terjaga saat farming!", "success", 5)
+        notify("Anti-Block Aktif 🛡️", "Semua blok di badan karakter otomatis dibersihkan!", "success", 4)
     end)
     task.delay(3.2, function()
-        notify("Teleport Feature Ready ➤", "Buka menu Teleport untuk pindah ke player lain!", "tp", 5)
+        notify("UI Slider & Scroll Ready ⚡", "Kontrol Movement super rapih & semua menu lancar di-scroll.", "move", 5)
     end)
 end
 
@@ -1184,7 +1374,7 @@ loadMainGUI = function()
     tIcon.BackgroundTransparency=1; tIcon.Image=LOGO_ID; tIcon.ZIndex=3
 
     local win=Instance.new("Frame",gui)
-    local WIN_W,WIN_H = 360, 380
+    local WIN_W,WIN_H = 360, 390
     win.Size=UDim2.new(0,WIN_W,0,WIN_H)
     win.AnchorPoint=Vector2.new(0.5,0.5); win.Position=UDim2.new(0.5,0,0.5,0)
     win.BorderSizePixel=0; win.Visible=false; win.Active=true; win.Draggable=true
@@ -1212,6 +1402,10 @@ loadMainGUI = function()
     local avatar=Instance.new("ImageLabel",header)
     avatar.Size=UDim2.new(0,34,0,34); avatar.Position=UDim2.new(0,46,0,11)
     avatar.BackgroundTransparency=1; avatar.Image=LOGO_ID; avatar.ZIndex=7; corner(avatar,9)
+    task.spawn(function()
+        local okThumb, thumb = pcall(function() return Players:GetUserThumbnailAsync(player.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size150x150) end)
+        if okThumb and thumb then avatar.Image = thumb end
+    end)
     
     local hTitle=Instance.new("TextLabel",header)
     hTitle.Size=UDim2.new(0,120,0,16); hTitle.Position=UDim2.new(0,86,0,12)
@@ -1257,9 +1451,13 @@ loadMainGUI = function()
     local sScroll=Instance.new("ScrollingFrame",sidebar); sScroll.BackgroundTransparency=1; sScroll.Size=UDim2.new(1,0,1,0)
     sScroll.ScrollBarThickness=2; sScroll.ScrollBarImageColor3=Theme.Accent; sScroll.BorderSizePixel=0
     sScroll.CanvasSize=UDim2.new(0,0,0,0); sScroll.AutomaticCanvasSize=Enum.AutomaticSize.Y; sScroll.ZIndex=6
-    pad(sScroll,6,6,6,5)
+    sScroll.ScrollingDirection=Enum.ScrollingDirection.Y
+    pad(sScroll,6,16,6,5)
     local sList=Instance.new("UIListLayout",sScroll)
     sList.Padding=UDim.new(0,4); sList.SortOrder=Enum.SortOrder.LayoutOrder
+    sList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        sScroll.CanvasSize = UDim2.new(0,0,0, sList.AbsoluteContentSize.Y + 28)
+    end)
 
     -- CONTENT
     local content=Instance.new("Frame",win)
@@ -1272,9 +1470,13 @@ loadMainGUI = function()
         p.Name=name; p.Size=UDim2.new(1,0,1,0); p.BackgroundTransparency=1
         p.ScrollBarThickness=3; p.ScrollBarImageColor3=Theme.Accent
         p.CanvasSize=UDim2.new(0,0,0,0); p.AutomaticCanvasSize=Enum.AutomaticSize.Y
+        p.ScrollingDirection=Enum.ScrollingDirection.Y
         p.Visible=false; p.BorderSizePixel=0; p.ZIndex=6
-        local l=Instance.new("UIListLayout",p); l.Padding=UDim.new(0,8); l.SortOrder=Enum.SortOrder.LayoutOrder
-        pad(p,2,6,1,7)
+        local l=Instance.new("UIListLayout",p); l.Padding=UDim.new(0,10); l.SortOrder=Enum.SortOrder.LayoutOrder
+        pad(p,2,30,1,7)
+        l:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+            p.CanvasSize = UDim2.new(0,0,0, l.AbsoluteContentSize.Y + 40)
+        end)
         pages[name]=p; return p
     end
 
@@ -1283,6 +1485,8 @@ loadMainGUI = function()
         for _,p in pairs(pages) do p.Visible=false end
         local p=pages[name]; if not p then return end
         p.Visible=true; activePage=name
+        local l = p:FindFirstChildOfClass("UIListLayout")
+        if l then p.CanvasSize = UDim2.new(0, 0, 0, l.AbsoluteContentSize.Y + 40) end
         for _,c in ipairs(p:GetChildren()) do
             if c:IsA("GuiObject") then
                 local op=c.Position; c.Position=op+UDim2.new(0,0,0,8)
@@ -1405,7 +1609,7 @@ loadMainGUI = function()
             tween(knob,0.2,{Position=state and UDim2.new(1,-17,0.5,-7) or UDim2.new(0,3,0.5,-7)},Enum.EasingStyle.Back)
             if onChange then pcall(onChange, state) end
         end)
-        return row
+        return row, sw, knob
     end
 
     local function actionBtn(parent,text,col,cb)
@@ -1445,6 +1649,177 @@ loadMainGUI = function()
         end
     end)
 
+    -- ===== MOVEMENT PAGE (SLIDER INTERAKTIF & BUTTON SUPER RAPIH + SCROLL LANCAR) =====
+    local mov = newPage("Movement")
+    sectionTitle(mov, "Pro Movement Controls")
+
+    local function createMovementCard(parentPage, titleText, toggleKey, defaultToggle, minV, maxV, initialVal, stepV, presets, onToggle, onSlide)
+        local savedToggle = Settings.toggles[toggleKey]
+        if savedToggle == nil then savedToggle = defaultToggle end
+        local currentVal = initialVal
+
+        local card = Instance.new("Frame", parentPage)
+        card.Size = UDim2.new(1, 0, 0, 134); card.ZIndex = 6
+        bindTheme(card, "BackgroundColor3", "Card"); corner(card, 12); stroke(card, Theme.Stroke, 1)
+
+        -- Top Header Row
+        local topRow = Instance.new("Frame", card)
+        topRow.Size = UDim2.new(1, 0, 0, 36); topRow.BackgroundTransparency = 1; topRow.ZIndex = 7
+        
+        local titleLbl = Instance.new("TextLabel", topRow)
+        titleLbl.Size = UDim2.new(1, -60, 1, 0); titleLbl.Position = UDim2.new(0, 12, 0, 0)
+        titleLbl.BackgroundTransparency = 1; titleLbl.Text = titleText
+        bindTheme(titleLbl, "TextColor3", "Text"); titleLbl.Font = Enum.Font.GothamBold; titleLbl.TextSize = 11
+        titleLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+        local sw = Instance.new("TextButton", topRow); sw.Size = UDim2.new(0, 38, 0, 20); sw.ZIndex = 7
+        sw.Position = UDim2.new(1, -48, 0.5, -10); sw.Text = ""; sw.AutoButtonColor = false
+        sw.BackgroundColor3 = savedToggle and Theme.Accent or Theme.Stroke; corner(sw, 999)
+        local knob = Instance.new("Frame", sw); knob.Size = UDim2.new(0, 14, 0, 14); knob.ZIndex = 8
+        knob.Position = savedToggle and UDim2.new(1, -17, 0.5, -7) or UDim2.new(0, 3, 0.5, -7)
+        knob.BackgroundColor3 = Color3.new(1, 1, 1); corner(knob, 999)
+
+        local state = savedToggle
+        if onToggle then pcall(onToggle, state) end
+        sw.MouseButton1Click:Connect(function()
+            state = not state
+            Settings.toggles[toggleKey] = state; saveSettings()
+            tween(sw, 0.2, {BackgroundColor3 = state and Theme.Accent or Theme.Stroke})
+            tween(knob, 0.2, {Position = state and UDim2.new(1, -17, 0.5, -7) or UDim2.new(0, 3, 0.5, -7)}, Enum.EasingStyle.Back)
+            if onToggle then pcall(onToggle, state) end
+        end)
+
+        -- Interactive Slider Bar ("Slide")
+        local sliderRow = Instance.new("Frame", card)
+        sliderRow.Size = UDim2.new(1, 0, 0, 28); sliderRow.Position = UDim2.new(0, 0, 0, 36)
+        sliderRow.BackgroundTransparency = 1; sliderRow.ZIndex = 7
+
+        local valBadge = Instance.new("TextLabel", sliderRow)
+        valBadge.Size = UDim2.new(0, 75, 1, 0); valBadge.Position = UDim2.new(0, 12, 0, 0)
+        valBadge.BackgroundTransparency = 1; valBadge.Text = "Speed: " .. tostring(currentVal)
+        valBadge.TextColor3 = Theme.Accent; valBadge.Font = Enum.Font.GothamBold; valBadge.TextSize = 10
+        valBadge.TextXAlignment = Enum.TextXAlignment.Left
+
+        local track = Instance.new("Frame", sliderRow)
+        track.Size = UDim2.new(1, -98, 0, 10); track.Position = UDim2.new(0, 86, 0.5, -5)
+        bindTheme(track, "BackgroundColor3", "CardHover"); corner(track, 999); stroke(track, Theme.Stroke, 1); track.ZIndex = 7
+
+        local fill = Instance.new("Frame", track)
+        local initialPct = math.clamp((currentVal - minV) / (maxV - minV), 0, 1)
+        fill.Size = UDim2.new(initialPct, 0, 1, 0); fill.BackgroundColor3 = Theme.Accent; fill.BorderSizePixel = 0
+        corner(fill, 999); fill.ZIndex = 8
+        gradient(fill, Theme.Accent, Theme.Second, 0)
+
+        local slideDot = Instance.new("Frame", fill)
+        slideDot.Size = UDim2.new(0, 14, 0, 14); slideDot.AnchorPoint = Vector2.new(0.5, 0.5)
+        slideDot.Position = UDim2.new(1, 0, 0.5, 0); slideDot.BackgroundColor3 = Color3.new(1,1,1)
+        corner(slideDot, 999); slideDot.ZIndex = 9
+
+        local function updateSliderVisual(newV)
+            currentVal = math.clamp(newV, minV, maxV)
+            valBadge.Text = "Speed: " .. tostring(currentVal)
+            local pct = math.clamp((currentVal - minV) / (maxV - minV), 0, 1)
+            tween(fill, 0.12, {Size = UDim2.new(pct, 0, 1, 0)})
+            onSlide(currentVal)
+        end
+
+        local slideBtn = Instance.new("TextButton", track)
+        slideBtn.Size = UDim2.new(1, 20, 1, 16); slideBtn.Position = UDim2.new(0, -10, 0, -8)
+        slideBtn.BackgroundTransparency = 1; slideBtn.Text = ""; slideBtn.ZIndex = 10
+
+        local isDragging = false
+        slideBtn.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                isDragging = true
+                local relX = input.Position.X - track.AbsolutePosition.X
+                local pct = math.clamp(relX / track.AbsoluteSize.X, 0, 1)
+                updateSliderVisual(math.floor(minV + (maxV - minV) * pct))
+            end
+        end)
+        UserInput.InputChanged:Connect(function(input)
+            if isDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+                local relX = input.Position.X - track.AbsolutePosition.X
+                local pct = math.clamp(relX / track.AbsoluteSize.X, 0, 1)
+                updateSliderVisual(math.floor(minV + (maxV - minV) * pct))
+            end
+        end)
+        UserInput.InputEnded:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                isDragging = false
+            end
+        end)
+
+        -- Neat Button Grid Row ("button nya yang rapih")
+        local gridHolder = Instance.new("Frame", card)
+        gridHolder.Size = UDim2.new(1, -20, 0, 56); gridHolder.Position = UDim2.new(0, 10, 0, 68)
+        gridHolder.BackgroundTransparency = 1; gridHolder.ZIndex = 7
+
+        local grid = Instance.new("UIGridLayout", gridHolder)
+        grid.CellSize = UDim2.new(0.333, -4, 0, 24); grid.CellPadding = UDim2.new(0, 6, 0, 6)
+        grid.SortOrder = Enum.SortOrder.LayoutOrder
+
+        local function addPresetBtn(label, color, cb, order)
+            local pb = Instance.new("TextButton", gridHolder)
+            pb.LayoutOrder = order; bindTheme(pb, "BackgroundColor3", "CardHover")
+            pb.Text = label; pb.TextColor3 = color; pb.Font = Enum.Font.GothamBold; pb.TextSize = 9
+            corner(pb, 7); stroke(pb, Theme.Stroke, 1); ripple(pb); pb.ZIndex = 7
+            pb.MouseButton1Click:Connect(function()
+                cb()
+            end)
+            return pb
+        end
+
+        addPresetBtn("-" .. tostring(stepV), Color3.fromRGB(255, 100, 100), function() updateSliderVisual(currentVal - stepV) end, 1)
+        addPresetBtn(presets[1].name, Theme.Accent, function() updateSliderVisual(presets[1].val) end, 2)
+        addPresetBtn("+" .. tostring(stepV), Color3.fromRGB(100, 255, 140), function() updateSliderVisual(currentVal + stepV) end, 3)
+        addPresetBtn(presets[2].name, Theme.Text, function() updateSliderVisual(presets[2].val) end, 4)
+        addPresetBtn(presets[3].name, Theme.Text, function() updateSliderVisual(presets[3].val) end, 5)
+        addPresetBtn(presets[4].name, Theme.Accent, function() updateSliderVisual(presets[4].val) end, 6)
+
+        return card
+    end
+
+    createMovementCard(mov, "Fly Mode (Terbang) 🕊️", "fly", false, 10, 500, flySpeed, 10, {
+        {name="Pelan", val=25}, {name="Normal", val=50}, {name="Cepat", val=120}, {name="Turbo", val=250}
+    }, function(s)
+        setFlyToggle(s)
+    end, function(nV)
+        flySpeed = nV; saveSettings()
+    end)
+
+    createMovementCard(mov, "Kecepatan Lari (WalkSpeed) 🏃", "runspeed", false, 16, 400, runSpeedVal, 10, {
+        {name="Normal", val=16}, {name="Cepat", val=35}, {name="Flash", val=80}, {name="Sonic", val=160}
+    }, function(s)
+        runSpeedActive = s
+        local h = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+        if h then h.WalkSpeed = s and runSpeedVal or 16 end
+        notify("Kecepatan Lari", s and "Kecepatan Lari aktif ("..runSpeedVal..") ✓" or "Normal (16)", "move", 2)
+    end, function(nV)
+        runSpeedVal = nV; saveSettings()
+        if runSpeedActive then
+            local h = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+            if h then h.WalkSpeed = runSpeedVal end
+        end
+    end)
+
+    createMovementCard(mov, "Kecepatan Lompat (Jump Power) 🦘", "jumppower", false, 20, 500, jumpPowerVal, 10, {
+        {name="Normal", val=50}, {name="Tinggi", val=100}, {name="Super", val=180}, {name="Roket", val=300}
+    }, function(s)
+        jumpPowerActive = s
+        local h = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+        if h then
+            if h.UseJumpPower then h.JumpPower = s and jumpPowerVal or 50 else h.JumpHeight = s and jumpPowerVal or 7.2 end
+        end
+    end, function(nV)
+        jumpPowerVal = nV; saveSettings()
+        if jumpPowerActive then
+            local h = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+            if h then
+                if h.UseJumpPower then h.JumpPower = jumpPowerVal else h.JumpHeight = jumpPowerVal end
+            end
+        end
+    end)
+
     local perf=newPage("Performance")
     sectionTitle(perf,"Preset Modes (Auto Smooth Active)")
     presetCard(perf,"Smooth Graphic (Auto)","Balanced smooth processing", "optimize","SMOOTH",applySmooth)
@@ -1454,9 +1829,9 @@ loadMainGUI = function()
     presetCard(perf,"Custom Config","Manual user adjustment", "settings","CUSTOM",applyCustom)
     if presetCards[currentMode] then presetCards[currentMode](true); activePreset=currentMode end
 
-    -- ===== TELEPORT PAGE =====
+    -- ===== TELEPORT PAGE (UNIVERSAL) =====
     local tp=newPage("Teleport")
-    sectionTitle(tp,"Quick Teleport to Player")
+    sectionTitle(tp,"Universal Teleport (Semua Game)")
 
     local infoBox=Instance.new("Frame",tp)
     infoBox.Size=UDim2.new(1,0,0,32); infoBox.ZIndex=6
@@ -1467,7 +1842,6 @@ loadMainGUI = function()
     bindTheme(infoTxt,"TextColor3","SubText"); infoTxt.Font=Enum.Font.GothamMedium; infoTxt.TextSize=9
     infoTxt.TextXAlignment=Enum.TextXAlignment.Left; infoTxt.ZIndex=7
 
-    -- Search box
     local searchBox=Instance.new("Frame",tp)
     searchBox.Size=UDim2.new(1,0,0,32); searchBox.ZIndex=6
     bindTheme(searchBox,"BackgroundColor3","Card"); corner(searchBox,10); stroke(searchBox,Theme.Stroke,1)
@@ -1486,7 +1860,6 @@ loadMainGUI = function()
     refreshBtn.AutoButtonColor=false; corner(refreshBtn,10)
     gradient(refreshBtn,Theme.Accent,Theme.Second,45); ripple(refreshBtn)
 
-    -- Player list container
     local listHolder=Instance.new("Frame",tp)
     listHolder.Size=UDim2.new(1,0,0,240); listHolder.ZIndex=6
     listHolder.ClipsDescendants=true
@@ -1497,10 +1870,14 @@ loadMainGUI = function()
     listScroll.BackgroundTransparency=1; listScroll.BorderSizePixel=0
     listScroll.ScrollBarThickness=3; listScroll.ScrollBarImageColor3=Theme.Accent
     listScroll.CanvasSize=UDim2.new(0,0,0,0); listScroll.AutomaticCanvasSize=Enum.AutomaticSize.Y
+    listScroll.ScrollingDirection=Enum.ScrollingDirection.Y
     listScroll.ZIndex=6
     pad(listScroll,4,4,4,4)
     local listLayout=Instance.new("UIListLayout",listScroll)
     listLayout.Padding=UDim.new(0,4); listLayout.SortOrder=Enum.SortOrder.LayoutOrder
+    listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        listScroll.CanvasSize = UDim2.new(0,0,0, listLayout.AbsoluteContentSize.Y + 20)
+    end)
 
     local playerRows={}
     local function clearPlayerList()
@@ -1516,7 +1893,6 @@ loadMainGUI = function()
         row.BackgroundColor3=Theme.CardHover; row.BackgroundTransparency=0.4
         row.Text=""; row.AutoButtonColor=false; corner(row,8); stroke(row,Theme.Stroke,1); ripple(row)
 
-        -- Avatar thumb
         local avi=Instance.new("ImageLabel",row)
         avi.Size=UDim2.new(0,28,0,28); avi.Position=UDim2.new(0,5,0.5,-14)
         avi.BackgroundColor3=Theme.Card; avi.BackgroundTransparency=0.5; avi.ZIndex=8
@@ -1540,21 +1916,19 @@ loadMainGUI = function()
         sub.Font=Enum.Font.GothamMedium; sub.TextSize=8; sub.TextXAlignment=Enum.TextXAlignment.Left
         sub.TextTruncate=Enum.TextTruncate.AtEnd; sub.ZIndex=8
 
-        -- Distance label
         local distLbl=Instance.new("TextLabel",row)
         distLbl.Size=UDim2.new(0,50,1,0); distLbl.Position=UDim2.new(1,-55,0,0)
         distLbl.BackgroundTransparency=1; distLbl.Text="--"; distLbl.TextColor3=Theme.Accent
         distLbl.Font=Enum.Font.GothamBold; distLbl.TextSize=9
         distLbl.TextXAlignment=Enum.TextXAlignment.Right; distLbl.ZIndex=8
 
-        -- Update distance loop
         task.spawn(function()
             while row.Parent and p.Parent do
                 local myChar = player.Character
                 local tChar = p.Character
                 if myChar and tChar then
-                    local myR = myChar:FindFirstChild("HumanoidRootPart")
-                    local tR = tChar:FindFirstChild("HumanoidRootPart")
+                    local myR = getRootPart(myChar)
+                    local tR = getRootPart(tChar)
                     if myR and tR then
                         local d = math.floor((myR.Position - tR.Position).Magnitude)
                         distLbl.Text = d.."m"
@@ -1564,7 +1938,7 @@ loadMainGUI = function()
                 else
                     distLbl.Text = "N/A"
                 end
-                task.wait(1.5)
+                task.wait(0.3)
             end
         end)
 
@@ -1623,23 +1997,21 @@ loadMainGUI = function()
         notify("Player List Refreshed", "List player berhasil diperbarui!", "success", 2)
     end)
 
-    -- Auto rebuild saat player join/leave
     Players.PlayerAdded:Connect(function() task.wait(0.5); pcall(rebuildPlayerList) end)
     Players.PlayerRemoving:Connect(function() task.wait(0.3); pcall(rebuildPlayerList) end)
 
-    -- Initial build
     task.defer(rebuildPlayerList)
 
     sectionTitle(tp,"Quick Actions")
     actionBtn(tp,"⚡ Teleport ke Player Terdekat",Color3.fromRGB(180,120,255),function()
         local myChar = player.Character
         if not myChar then return end
-        local myR = myChar:FindFirstChild("HumanoidRootPart")
+        local myR = getRootPart(myChar)
         if not myR then return end
         local closest, dist = nil, math.huge
         for _, p in ipairs(Players:GetPlayers()) do
             if p ~= player and p.Character then
-                local tR = p.Character:FindFirstChild("HumanoidRootPart")
+                local tR = getRootPart(p.Character)
                 if tR then
                     local d = (myR.Position - tR.Position).Magnitude
                     if d < dist then dist = d; closest = p end
@@ -1699,25 +2071,20 @@ loadMainGUI = function()
 
     -- GRAPHICS & VISION PAGE
     local gfx=newPage("Graphics")
-    sectionTitle(gfx,"Vision & Player ESP")
+    sectionTitle(gfx,"Vision & FE Invisible")
+    toggleRow(gfx,"FE Invisible Character 👻","invisible",false,function(s)
+        pcall(toggleInvisible, s)
+    end)
     toggleRow(gfx,"Night Vision / Fullbright 🌙","nightvision",false,function(s)
         pcall(toggleNightVision, s)
     end)
-    toggleRow(gfx,"Name Tags (Tampilkan Nama)","nametags",true,function(s)
+    toggleRow(gfx,"Name Tags + Jarak Live","nametags",true,function(s)
         pcall(refreshAllCharacterTags)
-        notify("Name Tags", s and "Name Tag diaktifkan ✓" or "Name Tag dimatikan", "info", 2)
+        notify("Name Tags", s and "Name Tag + Jarak Live diaktifkan ✓" or "Name Tag dimatikan", "info", 2)
     end)
     toggleRow(gfx,"Weapon Red Highlight","weaponhighlight",true,function(s)
         pcall(refreshAllCharacterTags)
         notify("Weapon ESP", s and "Sorotan Senjata diaktifkan ✓" or "Sorotan Senjata dimatikan", "info", 2)
-    end)
-    
-    toggleRow(gfx,"Invisible Character 👻","invisible",false,function(s)
-        pcall(toggleInvisible, s)
-    end)
-    toggleRow(gfx,"Player Box (Garis Kotak)","playerbox",false,function(s)
-        pcall(refreshAllCharacterTags)
-        notify("Player Box", s and "Garis kotak player diaktifkan ✓" or "Garis kotak dimatikan", "info", 2)
     end)
 
     sectionTitle(gfx,"Graphic Engine Options")
@@ -1735,9 +2102,10 @@ loadMainGUI = function()
     presetCard(fpsb,"Clear Engine Effects","Remove environment particles instantly","fps","CLEAR",function()
         for _,v in ipairs(Workspace:GetDescendants()) do pcall(removeEffects, v) end
     end)
-    presetCard(fpsb,"Smooth Plastic Mode","Convert materials to smooth-plastic","optimize","TEX",function()
+    presetCard(fpsb,"Smooth Plastic Mode","Convert environment materials to smooth-plastic","optimize","TEX",function()
         for _,v in ipairs(Workspace:GetDescendants()) do 
             pcall(function()
+                if player.Character and v:IsDescendantOf(player.Character) then return end
                 if v:IsA("BasePart") then v.Material=Enum.Material.SmoothPlastic; v.CastShadow=false end
             end)
         end
@@ -1788,16 +2156,21 @@ loadMainGUI = function()
     themeBtn("Dark"); themeBtn("Neon"); themeBtn("Light")
     
     sectionTitle(set,"Configuration")
+    actionBtn(set,"Bersihkan Blok / Box Karakter Sekarang",Color3.fromRGB(0,255,204),function()
+        pcall(refreshAllCharacterTags)
+        notify("Anti-Block","Semua blok di karakter berhasil dihapus!","success",3)
+    end)
     actionBtn(set,"Re-Apply Auto Smooth",Color3.fromRGB(100,255,140),function()
         applySmooth()
         notify("Smooth Applied","Grafik di-smooth-kan ulang!","success",3)
     end)
     actionBtn(set,"Reset Default Settings",Color3.fromRGB(255,120,120),function()
-        Settings={mode="SMOOTH",cooling=0,theme="Dark",toggles={nametags=true, weaponhighlight=true, nightvision=false, antiafk=true, fpsguard=true, invisible=false, playerbox=false}}; saveSettings()
-        applySmooth(); enableCooling(0,true); toggleNightVision(false); toggleInvisible(false); refreshAllCharacterTags(); notify("Reset","Pengaturan direset ke bawaan","info",2)
+        Settings={mode="SMOOTH",cooling=0,theme="Dark",toggles={nametags=true, weaponhighlight=true, nightvision=false, antiafk=true, fpsguard=true, invisible=false, fly=false, runspeed=false, jumppower=false}, flySpeed=50, runSpeed=35, jumpPower=80}; saveSettings()
+        flySpeed=50; runSpeedVal=35; jumpPowerVal=80
+        applySmooth(); enableCooling(0,true); toggleNightVision(false); toggleInvisible(false); setFlyToggle(false); refreshAllCharacterTags(); notify("Reset","Pengaturan direset ke bawaan","info",2)
     end)
 
-    -- ABOUT
+    -- ABOUT (PP OWNER MENGGUNAKAN PP ROBLOX RESMI OWNER)
     local about=newPage("About")
     local profile=Instance.new("Frame",about); profile.Size=UDim2.new(1,0,0,96); profile.ZIndex=6
     profile.ClipsDescendants=true
@@ -1807,10 +2180,19 @@ loadMainGUI = function()
     local pAvatar=Instance.new("ImageLabel",profile); pAvatar.Size=UDim2.new(0,54,0,54); pAvatar.ZIndex=7
     pAvatar.Position=UDim2.new(0,12,0,12); pAvatar.BackgroundTransparency=1; pAvatar.Image=LOGO_ID; corner(pAvatar,10)
     stroke(pAvatar,Theme.Accent,1.5)
+
+    task.spawn(function()
+        local okThumb, thumbUrl = pcall(function()
+            return Players:GetUserThumbnailAsync(OWNER_ROBLOX_ID, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size420x420)
+        end)
+        if okThumb and thumbUrl then
+            pAvatar.Image = thumbUrl
+        end
+    end)
     
     local pName=Instance.new("TextLabel",profile); pName.BackgroundTransparency=1; pName.ZIndex=7
     pName.Size=UDim2.new(1,-80,0,17); pName.Position=UDim2.new(0,74,0,15)
-    pName.Text="PalRyz / Noval"; bindTheme(pName,"TextColor3","Text"); pName.Font=Enum.Font.GothamBold
+    pName.Text="mamam5327 (Nopall)"; bindTheme(pName,"TextColor3","Text"); pName.Font=Enum.Font.GothamBold
     pName.TextSize=14; pName.TextXAlignment=Enum.TextXAlignment.Left; pName.TextTruncate=Enum.TextTruncate.AtEnd
     
     local pRole=Instance.new("TextLabel",profile); pRole.BackgroundTransparency=1; pRole.ZIndex=7
@@ -1856,17 +2238,26 @@ loadMainGUI = function()
         return b
     end
 
+    local function openWithNotif(url, appName)
+        local ok = openLink(url)
+        if ok then
+            notify(appName.." 🌐", "Membuka "..appName.." otomatis...", "success", 3)
+        else
+            notify("Link Disalin ✓", "Executor tidak support auto-open. Link sudah disalin, paste di Chrome!", "info", 4)
+        end
+    end
+
     sectionTitle(about,"Contact Owner")
     local waNum=OWNER_NUMBER:gsub("[^%d]","")
-    contactBtn(about,"WhatsApp",OWNER_NUMBER,Color3.fromRGB(37,211,102),function() openLink("https://wa.me/"..waNum); notify("WhatsApp","Membuka Chat WhatsApp...","success",2) end)
-    contactBtn(about,"Join Saluran","Klik untuk gabung info terbaru",Color3.fromRGB(123,97,255),function() openLink(GETKEY_LINK); notify("Saluran","Link disalin","info",2) end)
+    contactBtn(about,"WhatsApp",OWNER_NUMBER,Color3.fromRGB(37,211,102),function() openWithNotif("https://wa.me/"..waNum, "WhatsApp") end)
+    contactBtn(about,"Join Saluran","Klik untuk gabung info terbaru",Color3.fromRGB(123,97,255),function() openWithNotif(GETKEY_LINK, "Saluran WhatsApp") end)
     contactBtn(about,"Copy Number",OWNER_NUMBER,Color3.fromRGB(255,77,255),function() pcall(setclipboard,OWNER_NUMBER); notify("Disalin","Nomor owner disalin!","success",2) end)
-    contactBtn(about,"Telegram","Saluran Official Telegram",Color3.fromRGB(40,160,235),function() openLink(TELEGRAM_LINK); notify("Telegram","Membuka saluran...","info",2) end)
-    contactBtn(about,"Discord","Hubungi Support Server",Color3.fromRGB(88,101,242),function() openLink(DISCORD_LINK); notify("Discord","Membuka Server Support...","info",2) end)
+    contactBtn(about,"Telegram","Saluran Official Telegram",Color3.fromRGB(40,160,235),function() openWithNotif(TELEGRAM_LINK, "Telegram") end)
+    contactBtn(about,"Discord","Hubungi Support Server",Color3.fromRGB(88,101,242),function() openWithNotif(DISCORD_LINK, "Discord") end)
     
     sectionTitle(about,"Support Developer")
     contactBtn(about,"Donate Robux 💰","Klik untuk donasi Robux",Color3.fromRGB(255,215,0),function() 
-        openLink(DONATE_LINK)
+        openWithNotif(DONATE_LINK, "Halaman Donasi")
         notify("Donate","Terima kasih atas dukungan Anda! ❤️","vip",3) 
     end)
 
@@ -1874,7 +2265,7 @@ loadMainGUI = function()
     local infoGrid=Instance.new("Frame",about); infoGrid.Size=UDim2.new(1,0,0,128); infoGrid.BackgroundTransparency=1; infoGrid.ZIndex=6
     local ig=Instance.new("UIGridLayout",infoGrid); ig.CellSize=UDim2.new(0.5,-3,0,60); ig.CellPadding=UDim2.new(0,6,0,8)
     local function infoCard(title,val) local v=statCard(infoGrid,title); v.Text=val; return v end
-    infoCard("VERSION",HUB_VERSION); infoCard("EDITION","Ultimate Edition")
+    infoCard("VERSION",HUB_VERSION); infoCard("EDITION","Ultimate Pro Edition")
     infoCard("YEAR","2026"); infoCard("STATUS","Active")
 
     local footer=Instance.new("TextLabel",about); footer.Size=UDim2.new(1,0,0,32); footer.ZIndex=6
@@ -1882,12 +2273,14 @@ loadMainGUI = function()
     bindTheme(footer,"TextColor3","SubText"); footer.Font=Enum.Font.Gotham; footer.TextSize=8; footer.TextWrapped=true
 
     -- BUILD SIDEBAR ITEMS
-    navItem("Dashboard","dashboard",1); navItem("Performance","performance",2)
-    navItem("Teleport","teleport",3)
-    navItem("Cooling","cooling",4); navItem("Graphics","graphics",5)
-    navItem("FPS Boost","fps",6); navItem("Optimize","optimize",7)
-    navItem("Network","network",8); navItem("Settings","settings",9)
-    navItem("About","about",10)
+    navItem("Dashboard","dashboard",1)
+    navItem("Movement","movement",2)
+    navItem("Performance","performance",3)
+    navItem("Teleport","teleport",4)
+    navItem("Cooling","cooling",5); navItem("Graphics","graphics",6)
+    navItem("FPS Boost","fps",7); navItem("Optimize","optimize",8)
+    navItem("Network","network",9); navItem("Settings","settings",10)
+    navItem("About","about",11)
 
     do
         local b=navButtons["Dashboard"]
@@ -1899,6 +2292,23 @@ loadMainGUI = function()
     bellBtn.MouseButton1Click:Connect(function()
         notifDot.Visible=false
         notify("Pusat Notifikasi","Semua sistem dalam keadaan aman & lancar!","info",3)
+    end)
+
+    -- UNIVERSAL DYNAMIC SCROLL UPDATER (MENJAMIN SEMUA MENU BISA DI-SCROLL PADA SEMUA EXECUTOR)
+    task.spawn(function()
+        while win and win.Parent do
+            for _, p in pairs(pages) do
+                if p.Visible then
+                    local l = p:FindFirstChildOfClass("UIListLayout")
+                    if l then p.CanvasSize = UDim2.new(0, 0, 0, l.AbsoluteContentSize.Y + 45) end
+                end
+            end
+            local sl = sScroll:FindFirstChildOfClass("UIListLayout")
+            if sl then sScroll.CanvasSize = UDim2.new(0, 0, 0, sl.AbsoluteContentSize.Y + 32) end
+            local ll = listScroll:FindFirstChildOfClass("UIListLayout")
+            if ll then listScroll.CanvasSize = UDim2.new(0, 0, 0, ll.AbsoluteContentSize.Y + 25) end
+            task.wait(0.4)
+        end
     end)
 
     -- COLLAPSE SYSTEM
@@ -2003,9 +2413,11 @@ task.defer(function()
     if (Settings.cooling or 0) > 0 then pcall(enableCooling, Settings.cooling, true) end
     if Settings.toggles["nightvision"] then pcall(toggleNightVision, true) end
     if Settings.toggles["invisible"] then pcall(toggleInvisible, true) end
+    if Settings.toggles["fly"] then pcall(setFlyToggle, true) end
+    task.wait(1)
+    pcall(refreshAllCharacterTags)
 end)
 
--- Flow Pengecekan Follow Profil Roblox
 local isAlreadyFollowing, reason = checkFollowStatus(TARGET_FOLLOW_USER)
 
 if isAlreadyFollowing then
